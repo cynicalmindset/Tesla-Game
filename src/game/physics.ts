@@ -342,16 +342,10 @@ export class PhysicsEngine {
           });
         }
       } else if (type < 2.5) {
-        // High-Voltage Track Gap
-        const gapLength = 40 + Math.min(z * 0.002, 35);
-        this.gaps.push({
-          zStart: z,
-          zEnd: z + gapLength,
-        });
-
+        // High-Speed Aerial Arch Rings
         this.rings.push({
-          id: `gap-ring-${z}`,
-          position: new THREE.Vector3(0, 7.5, z + gapLength * 0.5),
+          id: `arch-ring-${z}`,
+          position: new THREE.Vector3(0, 5.5, z + 20),
           radius: 4.8,
           collected: false,
         });
@@ -399,22 +393,12 @@ export class PhysicsEngine {
 
   // Get current road height at (x, z)
   public getRoadHeight(x: number, z: number): { height: number; isGap: boolean; rampNormal?: THREE.Vector3 } {
-    if (Math.abs(x) > this.TRACK_HALF_WIDTH) {
-      return { height: -0.2, isGap: false };
-    }
-
-    for (const gap of this.gaps) {
-      if (z >= gap.zStart && z <= gap.zEnd) {
-        return { height: -25.0, isGap: true };
-      }
-    }
-
     for (const ramp of this.ramps) {
       if (z >= ramp.zStart && z <= ramp.zEnd && x >= ramp.xMin && x <= ramp.xMax) {
         const progress = (z - ramp.zStart) / (ramp.zEnd - ramp.zStart);
         const h = Math.sin(progress * Math.PI * 0.5) * ramp.height;
         return {
-          height: h,
+          height: Math.max(0, h),
           isGap: false,
           rampNormal: new THREE.Vector3(0, Math.cos(progress * 0.35), -Math.sin(progress * 0.35)).normalize(),
         };
@@ -766,55 +750,64 @@ export class PhysicsEngine {
     // Update car position
     this.state.position.addScaledVector(this.state.velocity, delta);
 
-    // Multi-Point Anti-Clipping Ground Collision Guard (Guarantees zero sinking into road or ramps!)
-    if (!roadInfo.isGap) {
-      const cornerOffsets = [
-        new THREE.Vector3(-0.94, -0.02, 1.3),   // FL tire
-        new THREE.Vector3(0.94, -0.02, 1.3),    // FR tire
-        new THREE.Vector3(-0.96, -0.02, -1.25), // RL tire
-        new THREE.Vector3(0.96, -0.02, -1.25),  // RR tire
-        new THREE.Vector3(0, 0.11, 2.15),       // Front Splitter
-        new THREE.Vector3(0, 0.14, -2.05),      // Rear Diffuser
-      ];
+    // ----------------------------------------------------
+    // MULTI-POINT 3D RIGID BODY COLLISION & ANTI-SINKING GUARD
+    // Full 3D Oriented Bounding Box: covers tires, chassis, splitter, diffuser,
+    // roof, canopy, hood, and rear wing so NO part of the vehicle ever dips below road!
+    // ----------------------------------------------------
+    const cornerOffsets = [
+      // Bottom contact points (Tire contact patches & underbody)
+      new THREE.Vector3(-0.95, -0.02, 1.35),   // FL tire
+      new THREE.Vector3(0.95, -0.02, 1.35),    // FR tire
+      new THREE.Vector3(-0.96, -0.02, -1.35),  // RL tire
+      new THREE.Vector3(0.96, -0.02, -1.35),   // RR tire
+      new THREE.Vector3(0, 0.10, 2.2),         // Front Splitter
+      new THREE.Vector3(0, 0.12, -2.1),        // Rear Diffuser
+      // Top contact points (Roof, Windshield & Elevated Wing when inverted or tumbling)
+      new THREE.Vector3(-0.72, 0.95, 0.35),    // Left roof
+      new THREE.Vector3(0.72, 0.95, 0.35),     // Right roof
+      new THREE.Vector3(-0.72, 0.95, -1.1),    // Left rear canopy
+      new THREE.Vector3(0.72, 0.95, -1.1),     // Right rear canopy
+      new THREE.Vector3(-0.95, 1.02, -1.85),   // Left rear wing
+      new THREE.Vector3(0.95, 1.02, -1.85),    // Right rear wing
+      new THREE.Vector3(0, 0.48, 1.4),         // Front hood peak
+    ];
 
-      let maxPenetration = 0;
-      for (const offset of cornerOffsets) {
-        const worldCorner = offset.clone().applyQuaternion(this.state.quaternion).add(this.state.position);
-        const roadAtCorner = this.getRoadHeight(worldCorner.x, worldCorner.z);
-        if (!roadAtCorner.isGap && worldCorner.y < roadAtCorner.height) {
-          const pen = roadAtCorner.height - worldCorner.y;
-          if (pen > maxPenetration) {
-            maxPenetration = pen;
-          }
+    let maxPenetration = 0;
+    for (const offset of cornerOffsets) {
+      const worldCorner = offset.clone().applyQuaternion(this.state.quaternion).add(this.state.position);
+      const roadAtCorner = this.getRoadHeight(worldCorner.x, worldCorner.z);
+      const minCornerY = Math.max(0, roadAtCorner.height) + 0.02;
+      if (worldCorner.y < minCornerY) {
+        const pen = minCornerY - worldCorner.y;
+        if (pen > maxPenetration) {
+          maxPenetration = pen;
         }
       }
-
-      if (maxPenetration > 0) {
-        this.state.position.y += maxPenetration;
-        this.state.velocity.y = Math.max(0, this.state.velocity.y);
-      }
-
-      if (this.state.position.y < targetGroundY) {
-        this.state.position.y = targetGroundY;
-        this.state.velocity.y = Math.max(0, this.state.velocity.y);
-      }
     }
 
-    // Safe fall recovery (prevents fatal game crashes & infinite falling)
-    if (this.state.position.y < -15.0) {
-      if (this.state.health <= 25) {
-        this.triggerCrash(true);
-      } else {
-        this.state.health -= 25;
-        this.state.position.set(0, 0.45, this.state.distance + 40);
-        this.state.velocity.set(0, 0, 20);
-        const currentYaw = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ').y;
-        this.state.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentYaw);
-        this.state.angularVelocity.set(0, 0, 0);
-        this.state.isAirborne = false;
-        soundManager.playLandingImpact(12, false);
-      }
+    if (maxPenetration > 0) {
+      this.state.position.y += maxPenetration;
+      this.state.velocity.y = Math.max(0, this.state.velocity.y);
     }
+
+    // Absolute chassis center floor: chassis center cannot go below road surface + 0.44m
+    const currentRoadHeight = Math.max(0, roadInfo.height);
+    const minCenterY = currentRoadHeight + 0.44;
+    if (this.state.position.y < minCenterY) {
+      this.state.position.y = minCenterY;
+      this.state.velocity.y = Math.max(0, this.state.velocity.y);
+    }
+
+    // Strict Guardrail Collision Guard (prevents escaping track laterally both grounded & airborne)
+    if (Math.abs(this.state.position.x) > this.TRACK_HALF_WIDTH - 0.85) {
+      const sign = Math.sign(this.state.position.x);
+      this.state.position.x = sign * (this.TRACK_HALF_WIDTH - 0.85);
+      this.state.velocity.x = -Math.abs(this.state.velocity.x) * sign * 0.4;
+      soundManager.playLandingImpact(8, false);
+    }
+
+    this.previousGroundY = targetGroundY;
 
     this.state.distance = Math.max(this.state.distance, this.state.position.z);
 

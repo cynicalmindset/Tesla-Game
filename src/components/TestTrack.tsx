@@ -14,7 +14,7 @@ export const TestTrack: React.FC<TestTrackProps> = ({
   carZ,
   ramps,
   rings,
-  gaps,
+  gaps: _gaps,
 }) => {
   const ringsGroupRef = useRef<THREE.Group>(null);
 
@@ -113,12 +113,6 @@ export const TestTrack: React.FC<TestTrackProps> = ({
     return rings.filter((r) => r.position.z >= minZ && r.position.z <= maxZ);
   }, [carZ, rings]);
 
-  const visibleGaps = useMemo(() => {
-    const minZ = carZ - 150;
-    const maxZ = carZ + 1400;
-    return gaps.filter((g) => g.zEnd >= minZ && g.zStart <= maxZ);
-  }, [carZ, gaps]);
-
   // Rotate floating rings smoothly
   useFrame(({ clock }) => {
     if (ringsGroupRef.current) {
@@ -132,26 +126,9 @@ export const TestTrack: React.FC<TestTrackProps> = ({
 
   return (
     <group name="TestTrack">
-      {/* ----------------- ROAD SEGMENTS ----------------- */}
+      {/* ----------------- ROAD SEGMENTS (CONTINUOUS SOLID HIGHWAY) ----------------- */}
       {visibleChunks.map((chunkIdx) => {
         const zCenter = chunkIdx * chunkSize + chunkSize / 2;
-        // Check if this chunk is inside a gap
-        const isInGap = visibleGaps.some(
-          (g) => zCenter >= g.zStart && zCenter <= g.zEnd
-        );
-
-        if (isInGap) {
-          // Render glowing abyss / broken track supports
-          return (
-            <group key={`chunk-gap-${chunkIdx}`} position={[0, -2, zCenter]}>
-              {/* High-voltage electrical conduit glow beneath chasm */}
-              <mesh position={[0, -15, 0]}>
-                <boxGeometry args={[26, 1, chunkSize]} />
-                <meshBasicMaterial color="#ff1e42" wireframe />
-              </mesh>
-            </group>
-          );
-        }
 
         return (
           <group key={`chunk-${chunkIdx}`} position={[0, 0, zCenter]}>
