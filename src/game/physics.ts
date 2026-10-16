@@ -141,6 +141,16 @@ export interface TrackGap {
   zEnd: number;
 }
 
+export interface ActiveStunt {
+  type: 'FLIP' | 'ROLL' | 'SPIN';
+  axis: 'X' | 'Y' | 'Z';
+  startQuat: THREE.Quaternion;
+  duration: number;
+  elapsed: number;
+  isStanding: boolean;
+  timeout: number;
+}
+
 export class PhysicsEngine {
   public state: CarState;
   
@@ -149,6 +159,7 @@ export class PhysicsEngine {
   private accumulatedRoll: number = 0;
   private accumulatedYaw: number = 0;
   private jumpStartedFromStand: boolean = false;
+  public activeStunt: ActiveStunt | null = null;
 
   // Track layout & features
   public ramps: TrackRamp[] = [];
@@ -234,6 +245,53 @@ export class PhysicsEngine {
     };
   }
 
+  public triggerStunt(type: 'FLIP' | 'ROLL' | 'SPIN') {
+    if (this.activeStunt) return;
+
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.state.quaternion);
+    const forwardSpeed = this.state.velocity.dot(forward);
+    const roadInfo = this.getRoadHeight(this.state.position.x, this.state.position.z);
+    const targetGroundY = roadInfo.height + 0.46;
+    const currentAltitude = Math.max(0, this.state.position.y - targetGroundY);
+    const isStanding = forwardSpeed < 8.0;
+
+    // Guaranteed authentic vertical launch impulse from underbody cold-gas thrusters:
+    // Launches car into a parabolic ballistic trajectory with ample clearance for full 360 rotation
+    if (currentAltitude < 3.2 || this.state.velocity.y < 8.0) {
+      const launchLift = isStanding
+        ? (this.isMarsMode ? 14.5 : 17.5)
+        : Math.max(this.state.velocity.y + 12.0, this.isMarsMode ? 13.0 : 16.0);
+      this.state.velocity.y = launchLift;
+      this.state.position.y = Math.max(this.state.position.y, targetGroundY + 0.25);
+    }
+
+    this.state.isAirborne = true;
+    this.jumpStartedFromStand = isStanding;
+    this.state.thrusterGas = Math.max(0, this.state.thrusterGas - 15);
+    soundManager.playRcsBurst();
+
+    let axis: 'X' | 'Y' | 'Z' = 'X';
+    if (type === 'FLIP') {
+      axis = 'X';
+    } else if (type === 'ROLL') {
+      axis = 'Z';
+    } else if (type === 'SPIN') {
+      axis = 'Y';
+    }
+
+    const duration = isStanding ? 0.72 : 0.62;
+
+    this.activeStunt = {
+      type,
+      axis,
+      startQuat: this.state.quaternion.clone(),
+      duration,
+      elapsed: 0,
+      isStanding,
+      timeout: 1.5,
+    };
+  }
+
   public reset() {
     this.state = this.getInitialState();
     this.accumulatedPitch = 0;
@@ -241,6 +299,7 @@ export class PhysicsEngine {
     this.accumulatedYaw = 0;
     this.jumpStartedFromStand = false;
     this.hit420EasterEgg = false;
+    this.activeStunt = null;
     this.suspensionCompression = 0;
     this.suspensionVelocity = 0;
     this.previousGroundY = 0.46;
@@ -405,8 +464,19 @@ export class PhysicsEngine {
     const targetGroundY = roadInfo.height + carBaseHeight;
     const altitude = Math.max(0, this.state.position.y - targetGroundY);
 
+    // Handle Instant Stunt Triggers (<kbd>F</kbd> for 360 Flip, <kbd>X</kbd> for Roll, <kbd>C</kbd> for Spin)
+    if (!this.activeStunt) {
+      if (input.instantFlip) {
+        this.triggerStunt('FLIP');
+      } else if (input.instantRoll) {
+        this.triggerStunt('ROLL');
+      } else if (input.instantSpin) {
+        this.triggerStunt('SPIN');
+      }
+    }
+
     const wasAirborne = this.state.isAirborne;
-    this.state.isAirborne = altitude > 0.35 || roadInfo.isGap;
+    this.state.isAirborne = (this.activeStunt !== null) || altitude > 0.25 || roadInfo.isGap;
 
     const forwardSpeed = this.state.velocity.dot(forward);
     const lateralSpeed = this.state.velocity.dot(right);
@@ -493,6 +563,11 @@ export class PhysicsEngine {
       const rotMatrix = new THREE.Matrix4().makeBasis(currentRightProjected, roadNormal, currentForwardProjected);
       targetQuat.setFromRotationMatrix(rotMatrix);
 
+      // Dynamic cornering body roll (chassis lean during high-speed turns)
+      const bodyRollAngle = -THREE.MathUtils.clamp((this.state.steeringAngle * forwardSpeed) * 0.0012, -0.07, 0.07);
+      const rollQuat = new THREE.Quaternion().setFromAxisAngle(currentForwardProjected, bodyRollAngle);
+      targetQuat.multiply(rollQuat);
+
       this.state.quaternion.slerp(targetQuat, 18 * delta);
       this.state.angularVelocity.set(0, 0, 0);
       this.state.wheelsRotation += (forwardSpeed * delta) / 0.35;
@@ -513,7 +588,6 @@ export class PhysicsEngine {
       this.state.thrusterGas = Math.min(100, this.state.thrusterGas + 4.0 * delta);
 
       // Heavy 2-ton Roadster Aerodynamic Downforce:
-      // Active high-speed aero pushes the heavy supercar down decisively on Earth
       const speedRatio = Math.min(Math.abs(forwardSpeed) / this.BASE_TOP_SPEED, 1.25);
       const aeroDownforce = (speedRatio * speedRatio) * 14.0;
       const effectiveGravity = currentGravity + (this.isMarsMode ? 0 : aeroDownforce * 0.45);
@@ -522,87 +596,141 @@ export class PhysicsEngine {
       this.state.velocity.x *= (1 - 0.08 * delta);
       this.state.velocity.z *= (1 - 0.02 * delta);
 
-      const torque = new THREE.Vector3();
-      const RCS_TORQUE = 4.2;
+      // ----------------------------------------------------
+      // AIRBORNE ROTATIONAL DYNAMICS & SPACEX RCS STUNT SIMULATION
+      // ----------------------------------------------------
+      if (this.activeStunt) {
+        this.activeStunt.elapsed += delta;
+        this.activeStunt.timeout -= delta;
+        const progress = Math.min(1.0, this.activeStunt.elapsed / this.activeStunt.duration);
 
-      let pitchInput = 0;
-      if (input.pitchUp) pitchInput += 1;
-      if (input.pitchDown) pitchInput -= 1;
-      if (pitchInput !== 0) {
-        torque.x = pitchInput * RCS_TORQUE;
-        soundManager.playRcsBurst();
-      }
+        // Continuous full 360-degree rotation (2 * PI radians)
+        const angle = progress * Math.PI * 2;
 
-      let rollInput = 0;
-      if (input.rollLeft) rollInput -= 1;
-      if (input.rollRight) rollInput += 1;
-      if (rollInput !== 0) {
-        torque.z = rollInput * RCS_TORQUE * 1.25;
-        soundManager.playRcsBurst();
-      }
+        let localRotAxis = new THREE.Vector3(1, 0, 0);
+        let rotAngle = -angle;
 
-      let yawInput = 0;
-      if (input.yawLeft) yawInput += 1;
-      if (input.yawRight) yawInput -= 1;
-      if (yawInput !== 0) {
-        torque.y = yawInput * RCS_TORQUE * 0.9;
-        soundManager.playRcsBurst();
-      }
+        if (this.activeStunt.type === 'FLIP') {
+          localRotAxis.set(1, 0, 0);
+          rotAngle = -angle; // Pitch nose up & back in 360 backflip
+          this.state.angularVelocity.set(-(Math.PI * 2) / this.activeStunt.duration, 0, 0);
+        } else if (this.activeStunt.type === 'ROLL') {
+          localRotAxis.set(0, 0, 1);
+          rotAngle = -angle; // Supersonic clockwise barrel roll
+          this.state.angularVelocity.set(0, 0, -(Math.PI * 2) / this.activeStunt.duration);
+        } else if (this.activeStunt.type === 'SPIN') {
+          localRotAxis.set(0, 1, 0);
+          rotAngle = angle; // Flat 360 yaw spin
+          this.state.angularVelocity.set(0, (Math.PI * 2) / this.activeStunt.duration, 0);
+        }
 
-      this.state.angularVelocity.x += torque.x * delta;
-      this.state.angularVelocity.y += torque.y * delta;
-      this.state.angularVelocity.z += torque.z * delta;
+        const stuntRotQuat = new THREE.Quaternion().setFromAxisAngle(localRotAxis, rotAngle);
+        this.state.quaternion.copy(this.activeStunt.startQuat).multiply(stuntRotQuat);
 
-      // Instant Stunt Triggers (Oct 15 Cold-Gas Stunts)
-      if (input.instantFlip) {
-        this.state.angularVelocity.x = 9.4;
-        soundManager.playRcsBurst();
-      }
-      if (input.instantRoll) {
-        this.state.angularVelocity.z = 10.4;
-        soundManager.playRcsBurst();
-      }
-      if (input.instantSpin) {
-        this.state.angularVelocity.y = 9.4;
-        soundManager.playRcsBurst();
-      }
+        // Emergency ground effect nitrogen cushion:
+        // If car is inverted near pavement, underbody thruster gives a quick cushion puff
+        if (altitude < 1.0 && progress > 0.2 && progress < 0.8 && this.state.velocity.y < 0) {
+          this.state.velocity.y += 24.0 * delta;
+          soundManager.playRcsBurst();
+        }
 
-      const angularDamp = 0.97;
-      this.state.angularVelocity.multiplyScalar(Math.pow(angularDamp, delta * 60));
+        // Stunt Completion Check (Full 360 Complete)
+        if (progress >= 1.0 || this.activeStunt.timeout <= 0) {
+          // Exactly at 360 degrees: smoothly align with ground/track heading
+          const currentEuler = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ');
+          this.state.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentEuler.y);
+          this.state.angularVelocity.set(0, 0, 0);
 
-      const deltaRotation = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(
-          this.state.angularVelocity.x * delta,
-          this.state.angularVelocity.y * delta,
-          this.state.angularVelocity.z * delta,
-          'XYZ'
-        )
-      );
-      this.state.quaternion.multiply(deltaRotation);
+          if (this.activeStunt.type === 'FLIP') {
+            if (this.activeStunt.isStanding) {
+              this.state.standingFlips += 1;
+              this.awardStunt('OCTOBER 15 STANDING 360 FLIP', 3500);
+            } else {
+              this.awardStunt('SUPERSONIC 360 FLIP', 2000);
+            }
+            this.state.stuntsCompletedCount += 1;
+          } else if (this.activeStunt.type === 'ROLL') {
+            this.state.stuntsCompletedCount += 1;
+            this.awardStunt('360 BARREL ROLL', 1600);
+          } else if (this.activeStunt.type === 'SPIN') {
+            this.state.stuntsCompletedCount += 1;
+            this.awardStunt('360 FLAT SPIN', 1400);
+          }
 
-      const pitchDeltaDeg = THREE.MathUtils.radToDeg(this.state.angularVelocity.x * delta);
-      const rollDeltaDeg = THREE.MathUtils.radToDeg(this.state.angularVelocity.z * delta);
-      const yawDeltaDeg = THREE.MathUtils.radToDeg(this.state.angularVelocity.y * delta);
+          soundManager.playStuntChime(this.state.combo);
+          this.activeStunt = null;
+        }
+      } else {
+        // Manual input controls (active when not in an automated stunt)
+        const torque = new THREE.Vector3();
 
-      this.accumulatedPitch += pitchDeltaDeg;
-      this.accumulatedRoll += rollDeltaDeg;
-      this.accumulatedYaw += yawDeltaDeg;
+        let pitchInput = 0;
+        if (input.pitchUp) pitchInput += 1;
+        if (input.pitchDown) pitchInput -= 1;
+        if (pitchInput !== 0) {
+          torque.x = pitchInput * 18.0;
+          soundManager.playRcsBurst();
+        }
 
-      this.checkStunts();
+        let rollInput = 0;
+        if (input.rollLeft) rollInput += 1;
+        if (input.rollRight) rollInput -= 1;
+        if (rollInput !== 0) {
+          torque.z = rollInput * 22.0; // Responsive supersonic RCS cold-gas thruster roll rate!
+          soundManager.playRcsBurst();
+        }
 
-      // Attitude alignment when nearing road surface (natural falling without floaty dampening)
-      if (altitude < 2.0) {
-        const currentYaw = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ').y;
-        const levelQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentYaw);
-        this.state.quaternion.slerp(levelQuat, 7.0 * delta);
+        let yawInput = 0;
+        if (input.yawLeft) yawInput += 1;
+        if (input.yawRight) yawInput -= 1;
+        if (yawInput !== 0) {
+          torque.y = yawInput * 12.0;
+          soundManager.playRcsBurst();
+        }
+
+        this.state.angularVelocity.x += torque.x * delta;
+        this.state.angularVelocity.y += torque.y * delta;
+        this.state.angularVelocity.z += torque.z * delta;
+
+        // Realistic angular damping for manual controls
+        const angularDamp = 0.985;
+        this.state.angularVelocity.multiplyScalar(Math.pow(angularDamp, delta * 60));
+
+        // Continuous physical rigid body quaternion rotation
+        const deltaRotation = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(
+            this.state.angularVelocity.x * delta,
+            this.state.angularVelocity.y * delta,
+            this.state.angularVelocity.z * delta,
+            'XYZ'
+          )
+        );
+        this.state.quaternion.multiply(deltaRotation);
+
+        const pitchDeltaDeg = THREE.MathUtils.radToDeg(this.state.angularVelocity.x * delta);
+        const rollDeltaDeg = THREE.MathUtils.radToDeg(this.state.angularVelocity.z * delta);
+        const yawDeltaDeg = THREE.MathUtils.radToDeg(this.state.angularVelocity.y * delta);
+
+        this.accumulatedPitch += pitchDeltaDeg;
+        this.accumulatedRoll += rollDeltaDeg;
+        this.accumulatedYaw += yawDeltaDeg;
+
+        this.checkStunts();
+
+        // Attitude alignment when nearing road surface (only when NOT actively rolling or pitching)
+        if (altitude < 0.8 && rollInput === 0 && pitchInput === 0) {
+          const currentYaw = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ').y;
+          const levelQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentYaw);
+          this.state.quaternion.slerp(levelQuat, 5.0 * delta);
+        }
       }
     }
 
     // ----------------------------------------------------
-    // ROCKET COLD-GAS THRUSTERS (SPACEBAR / INSTANT STUNT)
+    // ROCKET COLD-GAS THRUSTERS (SPACEBAR / STUNT VISUALS)
     // ----------------------------------------------------
     const isThrusterActive = Boolean(
-      (input.thruster || input.instantFlip || input.instantRoll || input.instantSpin) &&
+      (input.thruster || (this.activeStunt !== null && this.activeStunt.elapsed < 0.35)) &&
       this.state.thrusterGas > 5
     );
     if (isThrusterActive) {
@@ -611,23 +739,16 @@ export class PhysicsEngine {
       const liftForce = currentGravity * (this.isMarsMode ? 3.0 : 1.95);
       const forwardThrust = this.ACCELERATION * (forwardSpeed < 5 ? 0.35 : 0.95);
 
-      this.state.velocity.y += liftForce * delta;
-      this.state.velocity.addScaledVector(forward, forwardThrust * delta);
+      if (input.thruster) {
+        this.state.velocity.y += liftForce * delta;
+        this.state.velocity.addScaledVector(forward, forwardThrust * delta);
+      }
 
-      // Standing Jump / Launch from Road
-      if (!wasAirborne && this.state.position.y <= targetGroundY + 0.15) {
+      // Standing Jump / Launch from Road (Spacebar)
+      if (!wasAirborne && this.state.position.y <= targetGroundY + 0.15 && !this.activeStunt && input.thruster) {
         this.jumpStartedFromStand = forwardSpeed < 8.0;
         this.state.velocity.y = forwardSpeed < 5 ? (this.isMarsMode ? 22.0 : 15.5) : (this.isMarsMode ? 18.0 : 13.0);
         this.state.isAirborne = true;
-
-        if (input.instantFlip || input.pitchUp) {
-          this.state.angularVelocity.x = 9.4;
-        } else if (input.instantRoll) {
-          this.state.angularVelocity.z = 10.4;
-        } else if (input.instantSpin) {
-          this.state.angularVelocity.y = 9.4;
-        }
-
         soundManager.playLandingImpact(18, true);
       }
     }
@@ -636,6 +757,9 @@ export class PhysicsEngine {
     // LANDING DETECTION & EVALUATION
     // ----------------------------------------------------
     if (wasAirborne && !this.state.isAirborne && !roadInfo.isGap) {
+      if (this.activeStunt) {
+        this.activeStunt = null;
+      }
       this.handleLanding(verticalSpeed, up, forward);
     }
 
@@ -781,6 +905,7 @@ export class PhysicsEngine {
       isCrashing: this.state.crashState.isCrashing,
       damageLevel,
       isFireActive,
+      isStuntActive: this.activeStunt !== null,
     };
   }
 
@@ -832,12 +957,19 @@ export class PhysicsEngine {
 
       // 3. Ground Collision with Traffic:
       if (!this.state.isAirborne && dx < 1.7 && dz < 3.0) {
-        // Impact
-        this.state.velocity.z = Math.min(this.state.velocity.z, car.speed * 0.4);
-        this.state.velocity.x += (playerPos.x - car.x) * 4.0;
-        this.state.health = Math.max(0, this.state.health - 20);
+        const relativeSpeed = Math.abs(this.state.velocity.z - car.speed);
+        const damage = Math.round(relativeSpeed * 0.75) + 20;
+        this.state.health = Math.max(0, this.state.health - damage);
         this.state.combo = 1;
-        soundManager.playLandingImpact(20, false);
+
+        if (this.state.health <= 0 || relativeSpeed > 40) {
+          this.triggerCrash(this.state.health <= 0);
+        } else {
+          this.state.velocity.z = Math.min(this.state.velocity.z, car.speed * 0.4);
+          this.state.velocity.x += (playerPos.x - car.x) * 6.0;
+          this.state.velocity.y += 2.5;
+          soundManager.playLandingImpact(20, false);
+        }
       }
     }
   }
@@ -998,7 +1130,7 @@ export class PhysicsEngine {
     }
   }
 
-  private triggerCrash(fatal: boolean) {
+  public triggerCrash(fatal: boolean = false) {
     this.state.combo = 1;
     this.state.velocity.multiplyScalar(0.4);
     this.state.health = Math.max(0, this.state.health - (fatal ? 100 : 35));

@@ -67,6 +67,7 @@ export interface TelemetryData {
   isCrashing?: boolean;
   damageLevel?: number;       // 0 (none) to 3 (heavy fire/smoke)
   isFireActive?: boolean;
+  isStuntActive?: boolean;
 }
 
 export interface InputState {

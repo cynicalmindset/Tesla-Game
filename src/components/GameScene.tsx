@@ -71,8 +71,8 @@ const SimulationLoop: React.FC<{
     // Check crash / death state
     if (engine.state.crashState.isCrashing) {
       engine.state.crashState.timer -= delta;
-      screenShakeRef.current = 0.65;
-      if (engine.state.crashState.timer <= 0 || engine.state.health <= 0) {
+      screenShakeRef.current = Math.min(1.2, engine.state.crashState.timer * 0.4 + 0.35);
+      if (engine.state.crashState.timer <= 0) {
         onGameOver();
       }
     }
@@ -119,6 +119,7 @@ const SimulationLoop: React.FC<{
           isCrashing={engine.state.crashState.isCrashing}
           isFireActive={engine.state.isFireActive}
           damageLevel={engine.state.damageLevel}
+          isStuntActive={engine.activeStunt !== null}
         />
       </group>
     </>

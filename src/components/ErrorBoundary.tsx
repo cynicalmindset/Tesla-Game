@@ -82,7 +82,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
               <button
                 onClick={this.handleReload}
-                className="apple-pill flex-1 py-3 px-4 flex items-center justify-center gap-2 text-xs font-semibold text-black bg-white hover:bg-gray-100 cursor-pointer active:scale-95 transition-all shadow-[0_0_20px_rgba(255,255,255,0.4)]"
+                className="apple-pill flex-1 py-3 px-4 flex items-center justify-center gap-2 text-xs font-semibold text-black bg-white hover:bg-gray-100 cursor-pointer active:scale-95 transition-all shadow-md"
               >
                 <span>Reboot System</span>
               </button>

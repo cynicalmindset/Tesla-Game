@@ -48,44 +48,44 @@ html, body, #root {
   border-radius: 9999px;
 }
 
-/* Apple Liquid Glass Material */
+/* Sleek Matte Dark Automotive Materials */
 .apple-glass {
-  background: rgba(18, 22, 30, 0.72);
-  backdrop-filter: blur(32px) saturate(190%);
-  -webkit-backdrop-filter: blur(32px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  border-radius: 20px;
+  background: rgba(11, 13, 18, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+  border-radius: 16px;
 }
 
 .apple-pill {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(16, 18, 24, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 9999px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .apple-pill:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(26, 30, 40, 0.9);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .apple-pill-active {
-  background: rgba(255, 255, 255, 0.95);
+  background: #ffffff;
   color: #000000;
   border-color: #ffffff;
-  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.35);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .apple-island {
-  background: rgba(12, 15, 22, 0.82);
-  backdrop-filter: blur(40px) saturate(200%);
-  -webkit-backdrop-filter: blur(40px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  background: rgba(10, 12, 16, 0.94);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7);
   border-radius: 9999px;
 }
 
@@ -102,8 +102,8 @@ html, body, #root {
 
 /* Animations */
 @keyframes island-pop {
-  0% { transform: translate(-50%, -10px) scale(0.92); opacity: 0; }
-  100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+  0% { transform: translateY(-8px) scale(0.94); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 .animate-island {
@@ -162,9 +162,25 @@ html, body, #root {
 .w-16 { width: 4rem; }
 .h-16 { height: 4rem; }
 
+.h-7 { height: 1.75rem; }
+.h-8 { height: 2rem; }
+.h-9 { height: 2.25rem; }
+.h-10 { height: 2.5rem; }
+.w-7 { width: 1.75rem; }
+.w-8 { width: 2rem; }
+.w-9 { width: 2.25rem; }
+.w-10 { width: 2.5rem; }
+
 .flex { display: flex; }
 .inline-flex { display: inline-flex; }
 .grid { display: grid; }
+.flex-shrink-0 { flex-shrink: 0; }
+.hud-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
 .hidden { display: none; }
 .block { display: block; }
 .inline { display: inline; }
@@ -411,21 +427,27 @@ html, body, #root {
   .desktop-only { display: flex !important; }
 }
 
-/* Mars Mode & Plaid Easter Egg Effects */
-.mars-glow {
-  box-shadow: 0 0 25px rgba(249, 115, 22, 0.4), inset 0 0 10px rgba(249, 115, 22, 0.2);
-  border-color: rgba(249, 115, 22, 0.5) !important;
+/* Clean Authentic Automotive Accents */
+.mars-badge {
+  background-color: rgba(30, 20, 10, 0.85);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
 }
 
-.plaid-warp-text {
-  background: linear-gradient(90deg, #ff3b30, #ff9500, #ffcc00, #34c759, #007aff, #5856d6, #af52de);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: plaidShift 2s linear infinite;
+.plaid-badge {
+  background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  border: 1px solid rgba(255, 255, 255, 0.25);
 }
 
-@keyframes plaidShift {
-  0% { filter: hue-rotate(0deg); }
-  100% { filter: hue-rotate(360deg); }
+.cockpit-card {
+  background: rgba(10, 12, 16, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6);
 }
 

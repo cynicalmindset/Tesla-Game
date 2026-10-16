@@ -132,7 +132,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         {/* Center Rocket Thruster / Jump Launch Button */}
         <button
           {...bind('thruster', true)}
-          className="w-18 h-18 sm:w-20 sm:h-20 rounded-3xl bg-white text-black active:scale-90 transition-transform flex flex-col items-center justify-center shadow-[0_0_35px_rgba(255,255,255,0.7)] cursor-pointer touch-none select-none border-2 border-white/80"
+          className="w-18 h-18 sm:w-20 sm:h-20 rounded-3xl bg-white text-black active:scale-90 transition-transform flex flex-col items-center justify-center shadow-xl cursor-pointer touch-none select-none border border-white/60 active:bg-gray-100"
           title="Cold-Gas Rocket Thruster Launch"
         >
           <Wind className="w-7 h-7 sm:w-8 sm:h-8 text-black" />

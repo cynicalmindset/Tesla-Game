@@ -13,6 +13,7 @@ interface RoadsterModelProps {
   isCrashing?: boolean;
   isFireActive?: boolean;
   damageLevel?: number;
+  isStuntActive?: boolean;
 }
 
 export const RoadsterModel: React.FC<RoadsterModelProps> = ({
@@ -25,6 +26,7 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
   isCrashing = false,
   isFireActive = false,
   damageLevel = 0,
+  isStuntActive = false,
 }) => {
   const frontLeftWheelRef = useRef<THREE.Group>(null);
   const frontRightWheelRef = useRef<THREE.Group>(null);
@@ -295,6 +297,58 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
   );
 
 
+  // Procedural Smooth Radial Particle Textures (Removes square edges, creates photorealistic volumetric particles)
+  const particleTexture = useMemo(() => {
+    if (typeof document === 'undefined') return undefined;
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.7)');
+    gradient.addColorStop(0.65, 'rgba(255, 255, 255, 0.2)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
+  const fireTexture = useMemo(() => {
+    if (typeof document === 'undefined') return undefined;
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(255, 240, 200, 1)');
+    gradient.addColorStop(0.25, 'rgba(255, 120, 20, 0.85)');
+    gradient.addColorStop(0.65, 'rgba(220, 38, 38, 0.35)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
+  const smokeTexture = useMemo(() => {
+    if (typeof document === 'undefined') return undefined;
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, 'rgba(24, 24, 27, 0.8)');
+    gradient.addColorStop(0.35, 'rgba(39, 39, 42, 0.5)');
+    gradient.addColorStop(0.7, 'rgba(63, 63, 70, 0.15)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(canvas);
+  }, []);
+
   // 1. Rear Horizontal Plume setup (4 nozzles)
   const rearParticleCount = 140;
   const [rearPos, rearVel] = useMemo(() => {
@@ -431,7 +485,7 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
       rearRightWheelRef.current.children[0].rotation.x = wheelsRotation;
     }
 
-    const isStuntKey = Boolean(input.instantFlip || input.instantRoll || input.instantSpin);
+    const isStuntKey = Boolean(input.instantFlip || input.instantRoll || input.instantSpin || isStuntActive);
     const active = isThrusterActive || input.thruster || isStuntKey;
 
     // Supersonic Shock Cones & Mach Diamonds Animation
@@ -800,7 +854,8 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
       {/* Rear Thruster Plume Particles */}
       <points ref={rearPlumeRef} geometry={rearPlumeGeo} visible={false}>
         <pointsMaterial
-          size={0.42}
+          size={0.48}
+          map={particleTexture}
           color="#e0f2fe"
           transparent
           opacity={0.88}
@@ -861,7 +916,8 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
       {/* Underbody Downward Plumes shooting straight into the ground */}
       <points ref={downPlumeLeftRef} geometry={leftDownData.geo} visible={false}>
         <pointsMaterial
-          size={0.44}
+          size={0.52}
+          map={particleTexture}
           color="#bae6fd"
           transparent
           opacity={0.92}
@@ -872,7 +928,8 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
 
       <points ref={downPlumeRightRef} geometry={rightDownData.geo} visible={false}>
         <pointsMaterial
-          size={0.44}
+          size={0.52}
+          map={particleTexture}
           color="#bae6fd"
           transparent
           opacity={0.92}
@@ -884,7 +941,8 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
       {/* Corner RCS Attitude Puffs */}
       <points ref={rcsPuffRef} geometry={rcsPos} visible={false}>
         <pointsMaterial
-          size={0.32}
+          size={0.36}
+          map={particleTexture}
           color="#ffffff"
           transparent
           opacity={0.85}
@@ -960,8 +1018,9 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
       {/* ----------------- TRACKING CRASH FIRE, SMOKE & SPARKS ----------------- */}
       <points ref={crashFireRef} geometry={crashFirePos} visible={false}>
         <pointsMaterial
-          size={0.7}
-          color="#ff4500"
+          size={1.5}
+          map={fireTexture}
+          color="#ff5722"
           transparent
           opacity={0.92}
           blending={THREE.AdditiveBlending}
@@ -971,18 +1030,20 @@ export const RoadsterModel: React.FC<RoadsterModelProps> = ({
 
       <points ref={crashSmokeRef} geometry={crashSmokePos} visible={false}>
         <pointsMaterial
-          size={1.2}
+          size={2.5}
+          map={smokeTexture}
           color="#18181b"
           transparent
-          opacity={0.55}
+          opacity={0.65}
           depthWrite={false}
         />
       </points>
 
       <points ref={crashSparksRef} geometry={crashSparksPos} visible={false}>
         <pointsMaterial
-          size={0.25}
-          color="#fbbf24"
+          size={0.45}
+          map={particleTexture}
+          color="#fde047"
           transparent
           opacity={0.95}
           blending={THREE.AdditiveBlending}

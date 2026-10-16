@@ -41,12 +41,12 @@ export const CountdownOverlay: React.FC<CountdownOverlayProps> = ({ onComplete }
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none bg-black/35 backdrop-blur-[2px]">
       <div className="flex flex-col items-center">
-        <span className="font-orbitron text-xs md:text-sm font-bold tracking-[0.3em] text-cyan-400 uppercase mb-2">
+        <span className="text-xs md:text-sm font-semibold tracking-[0.25em] text-gray-400 uppercase mb-2">
           COLD-GAS SYSTEMS ARMED
         </span>
         <div
           key={String(count)}
-          className="font-orbitron text-7xl md:text-9xl font-black text-white tracking-tighter neon-glow-cyan animate-pulse"
+          className="text-7xl md:text-9xl font-black text-white tracking-tighter"
         >
           {count}
         </div>

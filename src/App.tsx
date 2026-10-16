@@ -88,6 +88,10 @@ export const App: React.FC = () => {
   // Persistent physics engine instance
   const engine = useMemo(() => new PhysicsEngine(), []);
 
+  useEffect(() => {
+    (window as unknown as { __physicsEngine?: PhysicsEngine }).__physicsEngine = engine;
+  }, [engine]);
+
   // Mars Mode Toggle Handler
   const handleToggleMars = useCallback(() => {
     engine.toggleMarsMode();
@@ -135,41 +139,28 @@ export const App: React.FC = () => {
         return;
       }
 
-      const isAirborne = engine.state.isAirborne;
-
       setInputState((prev) => {
         const next = { ...prev };
         switch (e.code) {
           case 'KeyW':
           case 'ArrowUp':
-            if (isAirborne) {
-              next.pitchDown = true;
-            } else {
-              next.accelerate = true;
-            }
+            next.accelerate = true;
+            next.pitchDown = true;
             break;
           case 'KeyS':
           case 'ArrowDown':
             next.brake = true;
-            if (isAirborne) {
-              next.pitchUp = true;
-            }
+            next.pitchUp = true;
             break;
           case 'KeyA':
           case 'ArrowLeft':
-            if (isAirborne) {
-              next.rollLeft = true;
-            } else {
-              next.steerLeft = true;
-            }
+            next.steerLeft = true;
+            next.rollLeft = true;
             break;
           case 'KeyD':
           case 'ArrowRight':
-            if (isAirborne) {
-              next.rollRight = true;
-            } else {
-              next.steerRight = true;
-            }
+            next.steerRight = true;
+            next.rollRight = true;
             break;
           case 'KeyQ':
             next.yawLeft = true;
