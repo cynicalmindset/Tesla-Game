@@ -7,6 +7,8 @@ import { StartScreen } from './components/StartScreen';
 import { PauseModal } from './components/PauseModal';
 import { GameOverModal } from './components/GameOverModal';
 import { TouchControls } from './components/TouchControls';
+import { MissionsDrawer } from './components/MissionsDrawer';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { soundManager } from './audio/SoundManager';
 
 const defaultInputState: InputState = {
@@ -51,8 +53,10 @@ const initialTelemetry: TelemetryData = {
   health: 100,
   trafficLeaped: 0,
   nearMisses: 0,
+  standingFlips: 0,
   currentMissionIndex: 0,
   missions: JSON.parse(JSON.stringify(INITIAL_MISSIONS)),
+  isMarsMode: false,
 };
 
 export const App: React.FC = () => {
@@ -60,15 +64,59 @@ export const App: React.FC = () => {
   const [telemetry, setTelemetry] = useState<TelemetryData>(initialTelemetry);
   const [inputState, setInputState] = useState<InputState>(defaultInputState);
   const [isMuted, setIsMuted] = useState<boolean>(soundManager.getIsMuted());
+  const [isMissionsOpen, setIsMissionsOpen] = useState<boolean>(false);
+
+  // Strictly only show touch controls on mobile viewports (< 768px) with touch support
+  const [isTouchControlsVisible, setIsTouchControlsVisible] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const isMobile = window.innerWidth < 768;
+    return isTouch && isMobile;
+  });
+
+  // Automatically enforce that desktop displays (>= 768px) NEVER show touch controls
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setIsTouchControlsVisible(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Persistent physics engine instance
   const engine = useMemo(() => new PhysicsEngine(), []);
+
+  // Mars Mode Toggle Handler
+  const handleToggleMars = useCallback(() => {
+    engine.toggleMarsMode();
+    setTelemetry((prev) => ({ ...prev, isMarsMode: engine.isMarsMode }));
+  }, [engine]);
 
   // Keyboard Event Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
         e.preventDefault();
+      }
+
+      // Close missions drawer if open
+      if (e.code === 'Escape' && isMissionsOpen) {
+        setIsMissionsOpen(false);
+        return;
+      }
+
+      // Toggle missions drawer with 'M'
+      if (e.code === 'KeyM') {
+        setIsMissionsOpen((prev) => !prev);
+        return;
+      }
+
+      // Elon Musk Easter Egg: Toggle Mars Mode with 'P'
+      if (e.code === 'KeyP') {
+        handleToggleMars();
+        return;
       }
 
       // Pause toggle
@@ -102,10 +150,9 @@ export const App: React.FC = () => {
             break;
           case 'KeyS':
           case 'ArrowDown':
+            next.brake = true;
             if (isAirborne) {
               next.pitchUp = true;
-            } else {
-              next.brake = true;
             }
             break;
           case 'KeyA':
@@ -208,13 +255,14 @@ export const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gameState, engine]);
+  }, [gameState, engine, isMissionsOpen, handleToggleMars]);
 
   // Restart function
   const restartGame = useCallback(() => {
     engine.reset();
     setInputState(defaultInputState);
     setTelemetry(initialTelemetry);
+    setIsMissionsOpen(false);
     setGameState('PLAYING');
   }, [engine]);
 
@@ -226,70 +274,86 @@ export const App: React.FC = () => {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-inter">
-      {/* 3D Game Canvas Scene */}
-      <GameScene
-        gameState={gameState}
-        inputState={inputState}
-        onUpdateTelemetry={setTelemetry}
-        onGameOver={() => setGameState('GAMEOVER')}
-        engine={engine}
-      />
-
-      {/* Speed & Boost Vignettes */}
-      {gameState === 'PLAYING' && telemetry.kmh > 240 && (
-        <div className="absolute inset-0 speed-vignette pointer-events-none transition-opacity duration-300" />
-      )}
-      {gameState === 'PLAYING' && inputState.boost && (
-        <div className="absolute inset-0 boost-vignette pointer-events-none transition-opacity duration-150" />
-      )}
-
-      {/* HUD Telemetry Overlay during Playing */}
-      {gameState === 'PLAYING' && (
-        <HUD
-          telemetry={telemetry}
-          isMuted={isMuted}
-          onToggleMute={handleToggleMute}
-          onPause={() => setGameState('PAUSED')}
+    <ErrorBoundary fallbackMessage="Flight Control System Recalibrating">
+      <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-inter">
+        {/* 3D Game Canvas Scene */}
+        <GameScene
+          gameState={gameState}
+          inputState={inputState}
+          onUpdateTelemetry={setTelemetry}
+          onGameOver={() => setGameState('GAMEOVER')}
+          engine={engine}
+          isMarsMode={telemetry.isMarsMode}
         />
-      )}
 
-      {/* Mobile / Touchscreen On-Screen Buttons */}
-      {gameState === 'PLAYING' && (
-        <TouchControls
-          setInputState={setInputState}
-          isAirborne={telemetry.isAirborne}
-        />
-      )}
+        {/* Speed & Boost Vignettes */}
+        {gameState === 'PLAYING' && telemetry.kmh > 240 && (
+          <div className="absolute inset-0 speed-vignette pointer-events-none transition-opacity duration-300" />
+        )}
+        {gameState === 'PLAYING' && inputState.boost && (
+          <div className="absolute inset-0 boost-vignette pointer-events-none transition-opacity duration-150" />
+        )}
 
-      {/* Start / Briefing Screen */}
-      {gameState === 'IDLE' && (
-        <StartScreen
-          onStart={() => setGameState('PLAYING')}
-          isMuted={isMuted}
-          onToggleMute={handleToggleMute}
-        />
-      )}
+        {/* HUD Telemetry Overlay during Playing */}
+        {gameState === 'PLAYING' && (
+          <HUD
+            telemetry={telemetry}
+            isMuted={isMuted}
+            onToggleMute={handleToggleMute}
+            onPause={() => setGameState('PAUSED')}
+            onOpenMissions={() => setIsMissionsOpen(true)}
+            isTouchControlsVisible={isTouchControlsVisible}
+            onToggleTouchControls={() => setIsTouchControlsVisible((v) => !v)}
+            onToggleMars={handleToggleMars}
+          />
+        )}
 
-      {/* Pause Modal */}
-      {gameState === 'PAUSED' && (
-        <PauseModal
-          onResume={() => setGameState('PLAYING')}
-          onRestart={restartGame}
-          isMuted={isMuted}
-          onToggleMute={handleToggleMute}
-        />
-      )}
+        {/* Mobile / Touchscreen On-Screen Buttons (Mobile Only) */}
+        {gameState === 'PLAYING' && (
+          <TouchControls
+            setInputState={setInputState}
+            isAirborne={telemetry.isAirborne}
+            visible={isTouchControlsVisible}
+          />
+        )}
 
-      {/* Game Over Flight Report Modal */}
-      {gameState === 'GAMEOVER' && (
-        <GameOverModal
-          telemetry={telemetry}
-          onRestart={restartGame}
+        {/* Interactive Missions Todo Checklist Drawer */}
+        <MissionsDrawer
+          missions={telemetry.missions}
+          isOpen={isMissionsOpen}
+          onClose={() => setIsMissionsOpen(false)}
         />
-      )}
-    </div>
+
+        {/* Start / Briefing Screen */}
+        {gameState === 'IDLE' && (
+          <StartScreen
+            onStart={() => setGameState('PLAYING')}
+            isMuted={isMuted}
+            onToggleMute={handleToggleMute}
+          />
+        )}
+
+        {/* Pause Modal */}
+        {gameState === 'PAUSED' && (
+          <PauseModal
+            onResume={() => setGameState('PLAYING')}
+            onRestart={restartGame}
+            isMuted={isMuted}
+            onToggleMute={handleToggleMute}
+          />
+        )}
+
+        {/* Game Over Flight Report Modal */}
+        {gameState === 'GAMEOVER' && (
+          <GameOverModal
+            telemetry={telemetry}
+            onRestart={restartGame}
+          />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 };
 
 export default App;
+

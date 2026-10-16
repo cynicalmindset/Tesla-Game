@@ -8,6 +8,7 @@ import { TestTrack } from './TestTrack';
 import { TrafficCars } from './TrafficCars';
 import { EnvironmentScene } from './EnvironmentScene';
 import { GameCamera } from './GameCamera';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface GameSceneProps {
   gameState: GameState;
@@ -15,6 +16,7 @@ interface GameSceneProps {
   onUpdateTelemetry: (telemetry: TelemetryData) => void;
   onGameOver: () => void;
   engine: PhysicsEngine;
+  isMarsMode?: boolean;
 }
 
 // Inner loop component within Canvas context
@@ -24,17 +26,17 @@ const SimulationLoop: React.FC<{
   onUpdateTelemetry: (telemetry: TelemetryData) => void;
   onGameOver: () => void;
   engine: PhysicsEngine;
-}> = ({ gameState, inputState, onUpdateTelemetry, onGameOver, engine }) => {
+  isMarsMode?: boolean;
+}> = ({ gameState, inputState, onUpdateTelemetry, onGameOver, engine, isMarsMode = false }) => {
   const carGroupRef = useRef<THREE.Group>(null);
   const screenShakeRef = useRef(0);
-  const slowMoTimerRef = useRef(0);
   const wasGroundedBeforeThruster = useRef(true);
 
   useFrame((_, delta) => {
     if (gameState === 'IDLE') {
       // In idle, slowly spin idle car on track
       if (carGroupRef.current) {
-        carGroupRef.current.position.set(0, 0.45, 0);
+        carGroupRef.current.position.set(0, 0.46, 0);
         carGroupRef.current.quaternion.identity();
       }
       return;
@@ -44,26 +46,17 @@ const SimulationLoop: React.FC<{
       return;
     }
 
-    // Launch Slow-Motion Bullet-Time Effect:
-    // If player hits thrusters while on the ground, trigger brief cinematic slow-mo!
-    let timeScale = 1.0;
+    // Screen shake decay
+    if (screenShakeRef.current > 0) {
+      screenShakeRef.current = Math.max(0, screenShakeRef.current - delta * 2.0);
+    }
+
     if (inputState.thruster && wasGroundedBeforeThruster.current && !engine.state.isAirborne) {
-      slowMoTimerRef.current = 0.45; // 0.45s of slow-motion
-      screenShakeRef.current = 0.35;
+      screenShakeRef.current = 0.25;
     }
     wasGroundedBeforeThruster.current = !engine.state.isAirborne;
 
-    if (slowMoTimerRef.current > 0) {
-      slowMoTimerRef.current -= delta;
-      timeScale = 0.42; // Slow down time for dramatic rocket launch feel
-    }
-
-    const dt = delta * timeScale;
-
-    // Decay screen shake
-    if (screenShakeRef.current > 0) {
-      screenShakeRef.current = Math.max(0, screenShakeRef.current - delta * 1.5);
-    }
+    const dt = Math.min(delta, 0.035);
 
     // Step physics simulation
     const telemetry = engine.update(dt, inputState);
@@ -78,7 +71,7 @@ const SimulationLoop: React.FC<{
     // Check crash / death state
     if (engine.state.crashState.isCrashing) {
       engine.state.crashState.timer -= delta;
-      screenShakeRef.current = 0.5;
+      screenShakeRef.current = 0.65;
       if (engine.state.crashState.timer <= 0 || engine.state.health <= 0) {
         onGameOver();
       }
@@ -100,6 +93,7 @@ const SimulationLoop: React.FC<{
       <EnvironmentScene
         carZ={engine.state.position.z}
         carSpeedKmh={engine.state.velocity.length() * 3.6}
+        isMarsMode={isMarsMode || engine.isMarsMode}
       />
 
       <TestTrack
@@ -114,7 +108,7 @@ const SimulationLoop: React.FC<{
         traffic={engine.traffic}
       />
 
-      <group ref={carGroupRef} position={[0, 0.45, 0]}>
+      <group ref={carGroupRef} position={[0, 0.46, 0]}>
         <RoadsterModel
           steeringAngle={engine.state.steeringAngle}
           wheelsRotation={engine.state.wheelsRotation}
@@ -122,6 +116,9 @@ const SimulationLoop: React.FC<{
           isBoosting={inputState.boost && engine.state.boostEnergy > 5}
           isAirborne={engine.state.isAirborne}
           input={inputState}
+          isCrashing={engine.state.crashState.isCrashing}
+          isFireActive={engine.state.isFireActive}
+          damageLevel={engine.state.damageLevel}
         />
       </group>
     </>
@@ -134,25 +131,40 @@ export const GameScene: React.FC<GameSceneProps> = ({
   onUpdateTelemetry,
   onGameOver,
   engine,
+  isMarsMode = false,
 }) => {
   return (
     <div className="absolute inset-0 w-full h-full bg-[#05070c]">
-      <Canvas
-        shadows
-        camera={{ position: [0, 2.5, -8], fov: 60 }}
-        gl={{
-          antialias: true,
-          powerPreference: 'high-performance',
-        }}
-      >
-        <SimulationLoop
-          gameState={gameState}
-          inputState={inputState}
-          onUpdateTelemetry={onUpdateTelemetry}
-          onGameOver={onGameOver}
-          engine={engine}
-        />
-      </Canvas>
+      <ErrorBoundary fallbackMessage="WebGL Flight Display Interrupted">
+        <Canvas
+          shadows
+          dpr={[1, 2]}
+          camera={{ position: [0, 2.5, -8], fov: 60 }}
+          gl={{
+            antialias: true,
+            powerPreference: 'high-performance',
+          }}
+          onCreated={({ gl }) => {
+            gl.domElement.addEventListener(
+              'webglcontextlost',
+              (event) => {
+                event.preventDefault();
+                console.warn('WebGL context lost. Holding state...');
+              },
+              false
+            );
+          }}
+        >
+          <SimulationLoop
+            gameState={gameState}
+            inputState={inputState}
+            onUpdateTelemetry={onUpdateTelemetry}
+            onGameOver={onGameOver}
+            engine={engine}
+            isMarsMode={isMarsMode}
+          />
+        </Canvas>
+      </ErrorBoundary>
     </div>
   );
 };

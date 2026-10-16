@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { TelemetryData } from '../types';
 import { RotateCcw, Share2, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { GithubIcon } from './GithubIcon';
 
 interface GameOverModalProps {
   telemetry: TelemetryData;
@@ -136,6 +137,17 @@ SpaceX Cold-Gas Package`;
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
             {copied ? 'Copied' : 'Share Report'}
           </button>
+
+          <a
+            href="https://github.com/cynicalmindset/Tesla-Game"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="py-3 px-4 apple-pill text-gray-300 hover:text-white text-sm font-medium tracking-tight cursor-pointer flex items-center justify-center gap-2 transition-colors"
+            title="cynicalmindset/Tesla-Game on GitHub"
+          >
+            <GithubIcon className="w-4 h-4 fill-current" />
+            <span className="hidden sm:inline">GitHub</span>
+          </a>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Volume2, VolumeX, ArrowRight } from 'lucide-react';
 import { soundManager } from '../audio/SoundManager';
+import { GithubIcon } from './GithubIcon';
 
 interface StartScreenProps {
   onStart: () => void;
@@ -31,13 +32,26 @@ export const StartScreen: React.FC<StartScreenProps> = ({
           </span>
         </div>
 
-        <button
-          onClick={onToggleMute}
-          className="apple-pill px-3.5 py-1.5 flex items-center gap-2 text-gray-300 hover:text-white cursor-pointer text-xs"
-        >
-          {isMuted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-white" />}
-          <span className="font-medium">{isMuted ? 'Muted' : 'Audio'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="https://github.com/cynicalmindset/Tesla-Game"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="apple-pill px-3 py-1.5 sm:px-3.5 sm:py-2 flex items-center gap-1.5 text-gray-300 hover:text-white transition-colors text-xs"
+            title="cynicalmindset/Tesla-Game on GitHub"
+          >
+            <GithubIcon className="w-3.5 h-3.5 fill-current" />
+            <span className="font-medium">GitHub</span>
+          </a>
+
+          <button
+            onClick={onToggleMute}
+            className="apple-pill px-3.5 py-1.5 flex items-center gap-2 text-gray-300 hover:text-white cursor-pointer text-xs"
+          >
+            {isMuted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-white" />}
+            <span className="font-medium">{isMuted ? 'Muted' : 'Audio'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Center Keynote Showcase */}

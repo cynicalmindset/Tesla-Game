@@ -29,12 +29,13 @@ export const GameCamera: React.FC<GameCameraProps> = ({
 
   useFrame(({ clock }, delta) => {
     const perspCamera = camera as THREE.PerspectiveCamera;
+    const clampedDelta = Math.min(Math.max(delta, 0.001), 0.04);
 
     // ----------------------------------------------------
     // START / IDLE SCREEN: CINEMATIC ORBIT
     // ----------------------------------------------------
     if (gameState === 'IDLE') {
-      orbitAngle.current += delta * 0.35;
+      orbitAngle.current += clampedDelta * 0.35;
       const radius = 6.5;
       const height = 1.6 + Math.sin(clock.getElapsedTime() * 0.6) * 0.3;
       const camX = Math.sin(orbitAngle.current) * radius;
@@ -48,7 +49,7 @@ export const GameCamera: React.FC<GameCameraProps> = ({
     }
 
     // ----------------------------------------------------
-    // GAMEPLAY CHASE CAMERA
+    // GAMEPLAY CHASE CAMERA (EXPONENTIAL DAMPED SMOOTHING)
     // ----------------------------------------------------
     const speedMs = carVelocity.length();
     const speedKmh = speedMs * 3.6;
@@ -57,45 +58,48 @@ export const GameCamera: React.FC<GameCameraProps> = ({
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(carQuaternion);
 
-    // Chase distance and height adjust with speed and airborne state
-    const speedRatio = Math.min(speedKmh / 450, 1.0);
-    const baseDistance = isAirborne ? 8.5 : 7.2 + speedRatio * 1.5;
-    const baseHeight = isAirborne ? 3.8 : 2.4;
+    // Chase distance and height adjust smoothly with speed and airborne state
+    const speedRatio = Math.min(speedKmh / 440, 1.0);
+    const baseDistance = isAirborne ? 8.6 : 7.2 + speedRatio * 1.6;
+    const baseHeight = isAirborne ? 3.6 : 2.3 + speedRatio * 0.3;
 
-    // Ideal camera position behind car
-    // We blend car's local up/forward with world up to prevent disorienting camera rolls during 360 barrel rolls
-    const blendUp = new THREE.Vector3(0, 1, 0).lerp(up, 0.25).normalize();
+    // Blend car's local up/forward with world up to prevent disorienting rolls during aerial stunts
+    const blendUp = new THREE.Vector3(0, 1, 0).lerp(up, 0.22).normalize();
     const idealCameraPos = carPosition
       .clone()
       .sub(forward.clone().multiplyScalar(baseDistance))
       .add(blendUp.clone().multiplyScalar(baseHeight));
 
-    // Screen Shake effect
+    // Smooth Harmonic Vibration (Tactile rocket rumble without jarring white-noise jitter)
     if (screenShakeIntensity > 0 || isThrusterActive) {
-      const shakeAmt = Math.max(screenShakeIntensity, isThrusterActive ? 0.08 : 0);
-      idealCameraPos.x += (Math.random() - 0.5) * shakeAmt;
-      idealCameraPos.y += (Math.random() - 0.5) * shakeAmt;
-      idealCameraPos.z += (Math.random() - 0.5) * shakeAmt;
+      const shakeAmt = Math.max(screenShakeIntensity * 0.15, isThrusterActive ? 0.035 : 0);
+      const wave = Math.sin(clock.getElapsedTime() * 55) * shakeAmt;
+      idealCameraPos.x += wave * 0.6;
+      idealCameraPos.y += wave * 0.4;
+      idealCameraPos.z += wave * 0.5;
     }
 
-    // Smooth position lerp
-    const posLerpRate = isAirborne ? 10.0 : 14.0;
-    currentCameraPos.current.lerp(idealCameraPos, posLerpRate * delta);
+    // Framerate-independent exponential smoothing
+    const posDamping = isAirborne ? 9.5 : 13.0;
+    const posAlpha = 1 - Math.exp(-posDamping * clampedDelta);
+    currentCameraPos.current.lerp(idealCameraPos, posAlpha);
     perspCamera.position.copy(currentCameraPos.current);
 
-    // Look-at point: in front of the car
+    // Look-at point: Ahead of the car along forward trajectory
     const lookAheadDistance = 14.0 + speedRatio * 8.0;
     const idealLookAt = carPosition
       .clone()
       .add(forward.clone().multiplyScalar(lookAheadDistance))
-      .add(new THREE.Vector3(0, 1.2, 0));
+      .add(new THREE.Vector3(0, 1.1, 0));
 
-    currentLookAt.current.lerp(idealLookAt, 16.0 * delta);
+    const lookDamping = 14.0;
+    const lookAlpha = 1 - Math.exp(-lookDamping * clampedDelta);
+    currentLookAt.current.lerp(idealLookAt, lookAlpha);
     perspCamera.lookAt(currentLookAt.current);
 
-    // Dynamic FOV based on speed and thrusters
-    const targetFov = 58 + speedRatio * 24 + (isThrusterActive ? 8 : 0);
-    perspCamera.fov = THREE.MathUtils.lerp(perspCamera.fov, targetFov, 6.0 * delta);
+    // Dynamic FOV with smooth exponential transition
+    const targetFov = 56 + speedRatio * 22 + (isThrusterActive ? 6 : 0);
+    perspCamera.fov = THREE.MathUtils.lerp(perspCamera.fov, targetFov, 1 - Math.exp(-5.0 * clampedDelta));
     perspCamera.updateProjectionMatrix();
   });
 

@@ -20,7 +20,7 @@ export interface Mission {
   current: number;
   completed: boolean;
   rewardPoints: number;
-  type: 'SPEED' | 'ALTITUDE' | 'STUNTS' | 'TRAFFIC_LEAP' | 'RINGS' | 'DISTANCE';
+  type: 'SPEED' | 'ALTITUDE' | 'STUNTS' | 'TRAFFIC_LEAP' | 'RINGS' | 'DISTANCE' | 'STANDING_FLIP' | 'NEAR_MISS';
 }
 
 export interface TrafficVehicle {
@@ -60,8 +60,13 @@ export interface TelemetryData {
   health: number;             // 0 to 100%
   trafficLeaped: number;
   nearMisses: number;
+  standingFlips: number;
   currentMissionIndex: number;
   missions: Mission[];
+  isMarsMode?: boolean;
+  isCrashing?: boolean;
+  damageLevel?: number;       // 0 (none) to 3 (heavy fire/smoke)
+  isFireActive?: boolean;
 }
 
 export interface InputState {
@@ -81,6 +86,7 @@ export interface InputState {
   instantFlip?: boolean;
   instantRoll?: boolean;
   instantSpin?: boolean;
+  toggleMars?: boolean;
 }
 
 export interface TrackFeature {

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Play, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { GithubIcon } from './GithubIcon';
 
 interface PauseModalProps {
   onResume: () => void;
@@ -48,6 +49,16 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-white" />}
             {isMuted ? 'Unmute Sound' : 'Mute Sound'}
           </button>
+
+          <a
+            href="https://github.com/cynicalmindset/Tesla-Game"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-2.5 px-4 apple-pill text-gray-300 hover:text-white text-xs font-medium cursor-pointer flex items-center justify-center gap-2 transition-colors"
+          >
+            <GithubIcon className="w-3.5 h-3.5 fill-current" />
+            <span>GitHub Repository</span>
+          </a>
         </div>
 
         <div className="border-t border-white/10 pt-4 text-xs text-gray-400 text-left">

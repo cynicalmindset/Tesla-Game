@@ -25,6 +25,16 @@ export const INITIAL_MISSIONS: Mission[] = [
   },
   {
     id: 'm3',
+    title: 'OCTOBER 15 REVEAL',
+    description: 'Execute standing vertical 360 flip',
+    target: 1,
+    current: 0,
+    completed: false,
+    rewardPoints: 3500,
+    type: 'STANDING_FLIP',
+  },
+  {
+    id: 'm4',
     title: 'TRAFFIC LEAP',
     description: 'Rocket jump over 2 cars',
     target: 2,
@@ -34,7 +44,7 @@ export const INITIAL_MISSIONS: Mission[] = [
     type: 'TRAFFIC_LEAP',
   },
   {
-    id: 'm4',
+    id: 'm5',
     title: 'AERIAL ACROBAT',
     description: 'Land 2 aerial flips or rolls',
     target: 2,
@@ -44,7 +54,7 @@ export const INITIAL_MISSIONS: Mission[] = [
     type: 'STUNTS',
   },
   {
-    id: 'm5',
+    id: 'm6',
     title: 'ENERGY HUNTER',
     description: 'Collect 3 floating rings',
     target: 3,
@@ -54,7 +64,17 @@ export const INITIAL_MISSIONS: Mission[] = [
     type: 'RINGS',
   },
   {
-    id: 'm6',
+    id: 'm7',
+    title: 'HIGHWAY NEAR-MISS',
+    description: 'Slip past 3 cars at high speed',
+    target: 3,
+    current: 0,
+    completed: false,
+    rewardPoints: 3500,
+    type: 'NEAR_MISS',
+  },
+  {
+    id: 'm8',
     title: 'HYPER DISTANCE',
     description: 'Drive 3,000 meters',
     target: 3000,
@@ -88,6 +108,7 @@ export interface CarState {
   stuntsCompletedCount: number;
   trafficLeaped: number;
   nearMisses: number;
+  standingFlips: number;
   currentMissionIndex: number;
   missions: Mission[];
   stuntHistory: StuntEvent[];
@@ -96,6 +117,8 @@ export interface CarState {
     isCrashing: boolean;
     timer: number;
   };
+  damageLevel: number;       // 0: none, 1: scratches, 2: smoke/sparks, 3: heavy fire
+  isFireActive: boolean;
 }
 
 export interface TrackRamp {
@@ -125,6 +148,7 @@ export class PhysicsEngine {
   private accumulatedPitch: number = 0;
   private accumulatedRoll: number = 0;
   private accumulatedYaw: number = 0;
+  private jumpStartedFromStand: boolean = false;
 
   // Track layout & features
   public ramps: TrackRamp[] = [];
@@ -135,15 +159,38 @@ export class PhysicsEngine {
   // Track width bounds
   public readonly TRACK_HALF_WIDTH = 12.5;
 
-  // Constants
-  private readonly GRAVITY = 18.5; // m/s^2
+  // Elon Musk Easter Eggs State
+  public isMarsMode: boolean = false;
+  private hit420EasterEgg: boolean = false;
+
+  // Heavy Vehicle Suspension & Aerodynamic Inertia State (~2,000kg Roadster)
+  private suspensionCompression: number = 0; // vertical compression offset (meters)
+  private suspensionVelocity: number = 0;    // vertical suspension rate (m/s)
+  private previousGroundY: number = 0.46;    // previous ground height to transfer ramp vertical momentum
+
+  // Constants (Calibrated for ~2,000kg Heavy Electric Roadster + SpaceX Package)
+  private readonly GRAVITY = 25.5; // m/s^2 (Realistic heavy-vehicle downward acceleration)
+  private readonly MARS_GRAVITY = 3.72; // m/s^2 (Exact Mars surface gravity: 3.72 m/s²)
   private readonly MAX_STEER = 0.58; // radians (~33 deg)
   private readonly BASE_TOP_SPEED = 122.2; // 440 km/h in m/s
   private readonly BOOST_TOP_SPEED = 144.4; // 520 km/h in m/s
   private readonly ACCELERATION = 26.0; // m/s^2 (0-100 km/h in 1.1s)
-  private readonly BRAKE_FORCE = 32.0;
+  private readonly BRAKE_FORCE = 62.0; // Responsive high-performance braking
+
+  public toggleMarsMode(): boolean {
+    this.isMarsMode = !this.isMarsMode;
+    if (this.isMarsMode) {
+      this.awardStunt('OCCUPY MARS ACTIVATED (3.72 m/s²)', 4200);
+      soundManager.playStuntChime(3);
+    } else {
+      this.awardStunt('EARTH STARBASE RETURN', 1000);
+      soundManager.playRingPickup();
+    }
+    return this.isMarsMode;
+  }
 
   constructor() {
+
     this.state = this.getInitialState();
     this.initTrackFeatures();
     this.initTraffic();
@@ -173,6 +220,7 @@ export class PhysicsEngine {
       stuntsCompletedCount: 0,
       trafficLeaped: 0,
       nearMisses: 0,
+      standingFlips: 0,
       currentMissionIndex: 0,
       missions: JSON.parse(JSON.stringify(INITIAL_MISSIONS)),
       stuntHistory: [],
@@ -181,6 +229,8 @@ export class PhysicsEngine {
         isCrashing: false,
         timer: 0,
       },
+      damageLevel: 0,
+      isFireActive: false,
     };
   }
 
@@ -189,6 +239,11 @@ export class PhysicsEngine {
     this.accumulatedPitch = 0;
     this.accumulatedRoll = 0;
     this.accumulatedYaw = 0;
+    this.jumpStartedFromStand = false;
+    this.hit420EasterEgg = false;
+    this.suspensionCompression = 0;
+    this.suspensionVelocity = 0;
+    this.previousGroundY = 0.46;
     this.initTrackFeatures();
     this.initTraffic();
   }
@@ -311,7 +366,33 @@ export class PhysicsEngine {
   }
 
   public update(dt: number, input: InputState): TelemetryData {
-    const delta = Math.min(dt, 0.05);
+    if (input.toggleMars) {
+      this.toggleMarsMode();
+      input.toggleMars = false;
+    }
+
+    const delta = Math.min(Math.max(dt, 0.001), 0.035);
+
+    // Strict safety guards against NaN or Infinity (Zero-crash guarantee)
+    if (
+      !Number.isFinite(this.state.position.x) ||
+      !Number.isFinite(this.state.position.y) ||
+      !Number.isFinite(this.state.position.z)
+    ) {
+      this.state.position.set(0, 0.45, Math.max(0, this.state.distance));
+      this.state.velocity.set(0, 0, 0);
+      this.state.quaternion.identity();
+      this.state.angularVelocity.set(0, 0, 0);
+    }
+    if (
+      !Number.isFinite(this.state.velocity.x) ||
+      !Number.isFinite(this.state.velocity.y) ||
+      !Number.isFinite(this.state.velocity.z)
+    ) {
+      this.state.velocity.set(0, 0, 0);
+    }
+
+    const currentGravity = this.isMarsMode ? this.MARS_GRAVITY : this.GRAVITY;
 
     // Car orientation vectors
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.state.quaternion);
@@ -320,7 +401,7 @@ export class PhysicsEngine {
 
     // Road query
     const roadInfo = this.getRoadHeight(this.state.position.x, this.state.position.z);
-    const carBaseHeight = 0.42;
+    const carBaseHeight = 0.46;
     const targetGroundY = roadInfo.height + carBaseHeight;
     const altitude = Math.max(0, this.state.position.y - targetGroundY);
 
@@ -330,6 +411,12 @@ export class PhysicsEngine {
     const forwardSpeed = this.state.velocity.dot(forward);
     const lateralSpeed = this.state.velocity.dot(right);
     const verticalSpeed = this.state.velocity.y;
+
+    // Upward ramp velocity transfer for heavy vehicle launching off incline
+    const groundSlopeSpeed = (targetGroundY - this.previousGroundY) / delta;
+    if (!wasAirborne && this.state.isAirborne && groundSlopeSpeed > 1.2 && forwardSpeed > 8.0) {
+      this.state.velocity.y = Math.min(groundSlopeSpeed, 20.0);
+    }
 
     // Handle Boost
     const isBoosting = input.boost && this.state.boostEnergy > 5;
@@ -362,16 +449,19 @@ export class PhysicsEngine {
         this.state.quaternion.multiply(deltaQuat);
       }
 
-      // Acceleration / Braking
+      // Acceleration / Braking (Upgraded High-Performance Regenerative & Disc Brakes)
       let accelForce = 0;
       if (input.accelerate) {
         const powerRatio = Math.max(0.15, 1 - (forwardSpeed / currentTopSpeed));
-        accelForce = this.ACCELERATION * (isBoosting ? 1.55 : 1.0) * powerRatio;
+        accelForce = this.ACCELERATION * (isBoosting ? 1.55 : 1.0) * powerRatio * (this.isMarsMode ? 1.25 : 1.0);
       } else if (input.brake) {
-        if (forwardSpeed > 1.0) {
+        if (forwardSpeed > 2.0) {
           accelForce = -this.BRAKE_FORCE;
+        } else if (forwardSpeed < -1.0) {
+          accelForce = this.BRAKE_FORCE * 0.75;
         } else {
-          accelForce = -this.ACCELERATION * 0.45;
+          // Sharp complete stop without unwanted creeping
+          accelForce = -forwardSpeed * 22.0 - (input.brake ? this.ACCELERATION * 0.4 : 0);
         }
       } else {
         accelForce = -forwardSpeed * 0.35 - Math.sign(forwardSpeed) * 0.8;
@@ -383,8 +473,18 @@ export class PhysicsEngine {
       const lateralFriction = -lateralSpeed * (1 - grip) * 25.0;
       this.state.velocity.addScaledVector(right, lateralFriction * delta);
 
-      this.state.position.y = THREE.MathUtils.lerp(this.state.position.y, targetGroundY, 22 * delta);
+      // Heavy vehicle suspension spring & damper dynamics (Hooke's law + critical damping)
+      const springK = 220.0;
+      const damperC = 28.0;
+      const springAcc = -springK * this.suspensionCompression - damperC * this.suspensionVelocity;
+      this.suspensionVelocity += springAcc * delta;
+      this.suspensionCompression += this.suspensionVelocity * delta;
+      this.suspensionCompression = THREE.MathUtils.clamp(this.suspensionCompression, -0.15, 0.05);
+
+      const targetChassisY = targetGroundY + this.suspensionCompression;
+      this.state.position.y = THREE.MathUtils.lerp(this.state.position.y, targetChassisY, 32 * delta);
       this.state.velocity.y = 0;
+      this.previousGroundY = targetGroundY;
 
       const targetQuat = new THREE.Quaternion();
       const roadNormal = roadInfo.rampNormal || new THREE.Vector3(0, 1, 0);
@@ -412,7 +512,13 @@ export class PhysicsEngine {
       this.state.totalAirtime += delta;
       this.state.thrusterGas = Math.min(100, this.state.thrusterGas + 4.0 * delta);
 
-      this.state.velocity.y -= this.GRAVITY * delta;
+      // Heavy 2-ton Roadster Aerodynamic Downforce:
+      // Active high-speed aero pushes the heavy supercar down decisively on Earth
+      const speedRatio = Math.min(Math.abs(forwardSpeed) / this.BASE_TOP_SPEED, 1.25);
+      const aeroDownforce = (speedRatio * speedRatio) * 14.0;
+      const effectiveGravity = currentGravity + (this.isMarsMode ? 0 : aeroDownforce * 0.45);
+
+      this.state.velocity.y -= effectiveGravity * delta;
       this.state.velocity.x *= (1 - 0.08 * delta);
       this.state.velocity.z *= (1 - 0.02 * delta);
 
@@ -449,15 +555,15 @@ export class PhysicsEngine {
 
       // Instant Stunt Triggers (Oct 15 Cold-Gas Stunts)
       if (input.instantFlip) {
-        this.state.angularVelocity.x = 9.2;
+        this.state.angularVelocity.x = 9.4;
         soundManager.playRcsBurst();
       }
       if (input.instantRoll) {
-        this.state.angularVelocity.z = 10.2;
+        this.state.angularVelocity.z = 10.4;
         soundManager.playRcsBurst();
       }
       if (input.instantSpin) {
-        this.state.angularVelocity.y = 9.2;
+        this.state.angularVelocity.y = 9.4;
         soundManager.playRcsBurst();
       }
 
@@ -484,13 +590,11 @@ export class PhysicsEngine {
 
       this.checkStunts();
 
-      // Underbody Ground-Cushion Reverse Thruster
-      // As the car descends near the roadbed, underbody thrusters fire reverse-bursts to soften touchdown
-      if (this.state.velocity.y < -2.0 && altitude < 1.6) {
-        this.state.velocity.y *= 0.88;
+      // Attitude alignment when nearing road surface (natural falling without floaty dampening)
+      if (altitude < 2.0) {
         const currentYaw = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ').y;
         const levelQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentYaw);
-        this.state.quaternion.slerp(levelQuat, 6.0 * delta);
+        this.state.quaternion.slerp(levelQuat, 7.0 * delta);
       }
     }
 
@@ -504,7 +608,7 @@ export class PhysicsEngine {
     if (isThrusterActive) {
       this.state.thrusterGas = Math.max(0, this.state.thrusterGas - 22.0 * delta);
 
-      const liftForce = this.GRAVITY * 1.65;
+      const liftForce = currentGravity * (this.isMarsMode ? 3.0 : 1.95);
       const forwardThrust = this.ACCELERATION * (forwardSpeed < 5 ? 0.35 : 0.95);
 
       this.state.velocity.y += liftForce * delta;
@@ -512,16 +616,16 @@ export class PhysicsEngine {
 
       // Standing Jump / Launch from Road
       if (!wasAirborne && this.state.position.y <= targetGroundY + 0.15) {
-        // Underbody downward thrusters blast the asphalt (Oct 15 Reveal stunt)
-        this.state.velocity.y = forwardSpeed < 5 ? 16.5 : 15.0;
+        this.jumpStartedFromStand = forwardSpeed < 8.0;
+        this.state.velocity.y = forwardSpeed < 5 ? (this.isMarsMode ? 22.0 : 15.5) : (this.isMarsMode ? 18.0 : 13.0);
         this.state.isAirborne = true;
 
         if (input.instantFlip || input.pitchUp) {
-          this.state.angularVelocity.x = 9.2;
+          this.state.angularVelocity.x = 9.4;
         } else if (input.instantRoll) {
-          this.state.angularVelocity.z = 10.2;
+          this.state.angularVelocity.z = 10.4;
         } else if (input.instantSpin) {
-          this.state.angularVelocity.y = 9.2;
+          this.state.angularVelocity.y = 9.4;
         }
 
         soundManager.playLandingImpact(18, true);
@@ -538,13 +642,54 @@ export class PhysicsEngine {
     // Update car position
     this.state.position.addScaledVector(this.state.velocity, delta);
 
-    if (this.state.position.y < targetGroundY && !roadInfo.isGap) {
-      this.state.position.y = targetGroundY;
-      this.state.velocity.y = Math.max(0, this.state.velocity.y);
+    // Multi-Point Anti-Clipping Ground Collision Guard (Guarantees zero sinking into road or ramps!)
+    if (!roadInfo.isGap) {
+      const cornerOffsets = [
+        new THREE.Vector3(-0.94, -0.02, 1.3),   // FL tire
+        new THREE.Vector3(0.94, -0.02, 1.3),    // FR tire
+        new THREE.Vector3(-0.96, -0.02, -1.25), // RL tire
+        new THREE.Vector3(0.96, -0.02, -1.25),  // RR tire
+        new THREE.Vector3(0, 0.11, 2.15),       // Front Splitter
+        new THREE.Vector3(0, 0.14, -2.05),      // Rear Diffuser
+      ];
+
+      let maxPenetration = 0;
+      for (const offset of cornerOffsets) {
+        const worldCorner = offset.clone().applyQuaternion(this.state.quaternion).add(this.state.position);
+        const roadAtCorner = this.getRoadHeight(worldCorner.x, worldCorner.z);
+        if (!roadAtCorner.isGap && worldCorner.y < roadAtCorner.height) {
+          const pen = roadAtCorner.height - worldCorner.y;
+          if (pen > maxPenetration) {
+            maxPenetration = pen;
+          }
+        }
+      }
+
+      if (maxPenetration > 0) {
+        this.state.position.y += maxPenetration;
+        this.state.velocity.y = Math.max(0, this.state.velocity.y);
+      }
+
+      if (this.state.position.y < targetGroundY) {
+        this.state.position.y = targetGroundY;
+        this.state.velocity.y = Math.max(0, this.state.velocity.y);
+      }
     }
 
-    if (roadInfo.isGap && this.state.position.y < -15.0) {
-      this.triggerCrash(true);
+    // Safe fall recovery (prevents fatal game crashes & infinite falling)
+    if (this.state.position.y < -15.0) {
+      if (this.state.health <= 25) {
+        this.triggerCrash(true);
+      } else {
+        this.state.health -= 25;
+        this.state.position.set(0, 0.45, this.state.distance + 40);
+        this.state.velocity.set(0, 0, 20);
+        const currentYaw = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ').y;
+        this.state.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentYaw);
+        this.state.angularVelocity.set(0, 0, 0);
+        this.state.isAirborne = false;
+        soundManager.playLandingImpact(12, false);
+      }
     }
 
     this.state.distance = Math.max(this.state.distance, this.state.position.z);
@@ -559,6 +704,13 @@ export class PhysicsEngine {
     const speedMs = this.state.velocity.length();
     const speedKmh = Math.round(speedMs * 3.6);
     this.state.maxSpeed = Math.max(this.state.maxSpeed, speedKmh);
+
+    // 420 Plaid Speed Easter Egg
+    if (speedKmh >= 420 && !this.hit420EasterEgg) {
+      this.hit420EasterEgg = true;
+      this.awardStunt("420 MAXIMUM PLAID WARP SPEED! +4200", 4200);
+      soundManager.playStuntChime(4);
+    }
 
     // Update active mission progress
     this.updateMissions(speedKmh, altitude);
@@ -576,12 +728,20 @@ export class PhysicsEngine {
       landingStability = 'CAUTION';
     }
 
+    // Compute damage level and fire tracking status
+    const damageLevel = this.state.health <= 0 ? 3 : this.state.health < 35 ? 2 : this.state.health < 75 ? 1 : 0;
+    const isFireActive = this.state.health < 35 || this.state.crashState.isCrashing;
+    this.state.damageLevel = damageLevel;
+    this.state.isFireActive = isFireActive;
+
     soundManager.updateTelemetrySounds(
       speedKmh,
       isThrusterActive,
       this.state.isAirborne,
       Math.abs(lateralSpeed) > 6.0,
-      isBoosting
+      isBoosting,
+      input.brake && forwardSpeed > 3.0 && !this.state.isAirborne,
+      isFireActive
     );
 
     if (forwardSpeed > 10) {
@@ -614,8 +774,13 @@ export class PhysicsEngine {
       health: Math.round(this.state.health),
       trafficLeaped: this.state.trafficLeaped,
       nearMisses: this.state.nearMisses,
+      standingFlips: this.state.standingFlips,
       currentMissionIndex: this.state.currentMissionIndex,
       missions: this.state.missions,
+      isMarsMode: this.isMarsMode,
+      isCrashing: this.state.crashState.isCrashing,
+      damageLevel,
+      isFireActive,
     };
   }
 
@@ -641,7 +806,11 @@ export class PhysicsEngine {
       ) {
         car.passedOver = true;
         this.state.trafficLeaped += 1;
-        this.awardStunt('TRAFFIC LEAP +500', 500);
+        if (car.modelType === 'CYBERTRUCK') {
+          this.awardStunt('CYBERTRUCK STEEL BALL TEST SURVIVED! +420', 420);
+        } else {
+          this.awardStunt('TRAFFIC LEAP +500', 500);
+        }
         soundManager.playRingPickup();
       }
 
@@ -673,83 +842,86 @@ export class PhysicsEngine {
     }
   }
 
-  // Update Mission Progression
+  // Update Mission Progression - Live Todo List Tracking
   private updateMissions(speedKmh: number, altitude: number) {
-    const currentMission = this.state.missions[this.state.currentMissionIndex];
-    if (!currentMission || currentMission.completed) return;
+    for (const mission of this.state.missions) {
+      if (mission.completed) continue;
 
-    let progressUpdated = false;
+      let justCompleted = false;
 
-    switch (currentMission.type) {
-      case 'SPEED':
-        currentMission.current = Math.min(currentMission.target, speedKmh);
-        if (speedKmh >= currentMission.target) {
-          currentMission.completed = true;
-          progressUpdated = true;
-        }
-        break;
+      switch (mission.type) {
+        case 'SPEED':
+          mission.current = Math.max(mission.current, Math.min(mission.target, speedKmh));
+          if (speedKmh >= mission.target) justCompleted = true;
+          break;
 
-      case 'ALTITUDE':
-        currentMission.current = Math.min(currentMission.target, Math.round(altitude));
-        if (altitude >= currentMission.target) {
-          currentMission.completed = true;
-          progressUpdated = true;
-        }
-        break;
+        case 'ALTITUDE':
+          mission.current = Math.max(mission.current, Math.min(mission.target, Math.round(altitude)));
+          if (altitude >= mission.target) justCompleted = true;
+          break;
 
-      case 'TRAFFIC_LEAP':
-        currentMission.current = Math.min(currentMission.target, this.state.trafficLeaped);
-        if (this.state.trafficLeaped >= currentMission.target) {
-          currentMission.completed = true;
-          progressUpdated = true;
-        }
-        break;
+        case 'STANDING_FLIP':
+          mission.current = Math.min(mission.target, this.state.standingFlips);
+          if (this.state.standingFlips >= mission.target) justCompleted = true;
+          break;
 
-      case 'STUNTS':
-        currentMission.current = Math.min(currentMission.target, this.state.stuntsCompletedCount);
-        if (this.state.stuntsCompletedCount >= currentMission.target) {
-          currentMission.completed = true;
-          progressUpdated = true;
-        }
-        break;
+        case 'TRAFFIC_LEAP':
+          mission.current = Math.min(mission.target, this.state.trafficLeaped);
+          if (this.state.trafficLeaped >= mission.target) justCompleted = true;
+          break;
 
-      case 'RINGS':
-        currentMission.current = Math.min(currentMission.target, this.state.ringsCollected);
-        if (this.state.ringsCollected >= currentMission.target) {
-          currentMission.completed = true;
-          progressUpdated = true;
-        }
-        break;
+        case 'STUNTS':
+          mission.current = Math.min(mission.target, this.state.stuntsCompletedCount);
+          if (this.state.stuntsCompletedCount >= mission.target) justCompleted = true;
+          break;
 
-      case 'DISTANCE':
-        currentMission.current = Math.min(currentMission.target, Math.round(this.state.distance));
-        if (this.state.distance >= currentMission.target) {
-          currentMission.completed = true;
-          progressUpdated = true;
-        }
-        break;
-    }
+        case 'RINGS':
+          mission.current = Math.min(mission.target, this.state.ringsCollected);
+          if (this.state.ringsCollected >= mission.target) justCompleted = true;
+          break;
 
-    if (progressUpdated) {
-      // Award mission completion!
-      this.state.score += currentMission.rewardPoints;
-      this.awardStunt(`MISSION COMPLETE: ${currentMission.title}!`, currentMission.rewardPoints);
-      soundManager.playRingPickup();
+        case 'NEAR_MISS':
+          mission.current = Math.min(mission.target, this.state.nearMisses);
+          if (this.state.nearMisses >= mission.target) justCompleted = true;
+          break;
 
-      if (this.state.currentMissionIndex < this.state.missions.length - 1) {
-        this.state.currentMissionIndex += 1;
+        case 'DISTANCE':
+          mission.current = Math.min(mission.target, Math.round(this.state.distance));
+          if (this.state.distance >= mission.target) justCompleted = true;
+          break;
+      }
+
+      if (justCompleted) {
+        mission.completed = true;
+        this.state.score += mission.rewardPoints;
+        this.awardStunt(`COMPLETED: ${mission.title}`, mission.rewardPoints);
+        soundManager.playStuntChime(3);
       }
     }
+
+    // Keep active mission pointer at the first incomplete mission
+    const firstIncomplete = this.state.missions.findIndex((m) => !m.completed);
+    this.state.currentMissionIndex = firstIncomplete !== -1 ? firstIncomplete : this.state.missions.length - 1;
   }
 
   private checkStunts() {
     if (this.accumulatedPitch >= 300) {
       this.state.stuntsCompletedCount += 1;
-      this.awardStunt('BACKFLIP', 1200);
+      if (this.jumpStartedFromStand) {
+        this.state.standingFlips += 1;
+        this.awardStunt('OCTOBER 15 STANDING BACKFLIP', 2500);
+      } else {
+        this.awardStunt('BACKFLIP', 1200);
+      }
       this.accumulatedPitch -= 360;
     } else if (this.accumulatedPitch <= -300) {
       this.state.stuntsCompletedCount += 1;
-      this.awardStunt('FRONTFLIP', 1200);
+      if (this.jumpStartedFromStand) {
+        this.state.standingFlips += 1;
+        this.awardStunt('OCTOBER 15 STANDING FRONTFLIP', 2500);
+      } else {
+        this.awardStunt('FRONTFLIP', 1200);
+      }
       this.accumulatedPitch += 360;
     }
 
@@ -801,6 +973,12 @@ export class PhysicsEngine {
     this.accumulatedPitch = 0;
     this.accumulatedRoll = 0;
     this.accumulatedYaw = 0;
+    this.jumpStartedFromStand = false;
+
+    // Realistic heavy suspension impact compression
+    const impactSpeed = Math.abs(verticalVelocity);
+    this.suspensionVelocity = -Math.min(impactSpeed * 0.28, 5.5);
+    this.suspensionCompression = -Math.min(impactSpeed * 0.012, 0.14);
 
     if (upDot > 0.92 && headingAlignment > 0.85) {
       this.state.cleanLandingCount += 1;
@@ -822,17 +1000,27 @@ export class PhysicsEngine {
 
   private triggerCrash(fatal: boolean) {
     this.state.combo = 1;
-    this.state.velocity.multiplyScalar(0.35);
+    this.state.velocity.multiplyScalar(0.4);
     this.state.health = Math.max(0, this.state.health - (fatal ? 100 : 35));
     soundManager.playCrash();
 
     if (fatal || this.state.health <= 0) {
       this.state.crashState.isCrashing = true;
-      this.state.crashState.timer = 2.0;
+      this.state.crashState.timer = 2.5;
+      this.state.isFireActive = true;
+      this.state.damageLevel = 3;
+      // Realistic tumble physics with violent rotational spin
+      this.state.angularVelocity.set(
+        (Math.random() - 0.5) * 8.5,
+        (Math.random() - 0.5) * 6.5,
+        (Math.random() - 0.5) * 11.0
+      );
+      this.state.velocity.y += 5.5;
+      this.state.isAirborne = true;
     } else {
       const currentYaw = new THREE.Euler().setFromQuaternion(this.state.quaternion, 'YXZ').y;
       this.state.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), currentYaw);
-      this.state.position.y = 0.5;
+      this.state.position.y = 0.52;
     }
   }
 
